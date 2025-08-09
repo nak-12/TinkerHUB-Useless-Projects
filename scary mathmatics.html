@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Two-Digit Math Challenge — Survive the Timer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root{
+    --bg:#0b0b0f;
+    --card:#111217;
+    --accent:#ff3b30;
+    --text:#eaeaea;
+  }
+  html,body{height:100%; margin:0; background:var(--bg); color:var(--text); font-family:system-ui,Segoe UI,Roboto,Arial;}
+  .wrap{min-height:100%; display:flex; align-items:center; justify-content:center; padding:24px;}
+  .card{width:420px; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.03)); border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,0.6); padding:22px; text-align:center;}
+  h1{margin:0 0 8px; font-size:20px;}
+  p.lead{margin:0 0 14px; color:#bbb;}
+  .controls{display:flex; gap:10px; justify-content:center; margin-bottom:14px;}
+  input[type="number"]{width:100%; padding:10px; font-size:16px; border-radius:8px; border:1px solid #232428; background:#0e0e12; color:var(--text); text-align:center;}
+  button{padding:10px 14px; border-radius:8px; border:0; cursor:pointer; background:var(--accent); color:white; font-weight:600;}
+  #gameArea{display:none; margin-top:8px;}
+  #question{font-size:28px; margin:12px 0; animation:popIn .35s ease;}
+  @keyframes popIn{from{transform:translateY(6px) scale(.98);opacity:0}to{transform:none;opacity:1}}
+  #answer{padding:10px; font-size:18px; width:180px; border-radius:8px; border:1px solid #232428; background:#0e0e12; color:var(--text); text-align:center;}
+  .row{display:flex; gap:8px; justify-content:center; margin-top:10px;}
+  .timer{margin-top:14px; font-size:18px; color:#ffd5d0; animation:pulse 1s infinite alternate;}
+  @keyframes pulse{from{transform:scale(1)}to{transform:scale(1.02)}}
+
+  /* jumpscare overlay */
+  #jumpscareOverlay{
+    display:none;
+    position:fixed;
+    inset:0;
+    z-index:9999;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
+    background:#000;
+  }
+  #scareImg{width:100%; height:100%; object-fit:cover; display:block; transform-origin:center;}
+  /* shake animation */
+  @keyframes heavyShake {
+    0%{transform:translate(6px,6px) rotate(0.5deg)}
+    20%{transform:translate(-6px,-6px) rotate(-0.5deg)}
+    40%{transform:translate(6px,-6px) rotate(0.5deg)}
+    60%{transform:translate(-6px,6px) rotate(-0.5deg)}
+    80%{transform:translate(6px,0px) rotate(0.2deg)}
+    100%{transform:translate(0px,-6px) rotate(-0.2deg)}
+  }
+  /* flashing overlay */
+  #flash{display:none; position:fixed; inset:0; background:rgba(255,0,0,0.7); z-index:10000; animation:flashAnim .08s infinite alternate;}
+  @keyframes flashAnim{from{opacity:0}to{opacity:1}}
+
+  /* small footer */
+  .note{font-size:12px; color:#999; margin-top:12px;}
+  /* responsive */
+  @media (max-width:480px){
+    .card{width:92%}
+    #question{font-size:22px}
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" id="card">
+      <h1>Two-Digit Math Challenge</h1>
+      <p class="lead">Answer correctly to move on. <strong>One mistake and it's game over.</strong></p>
+
+      <div id="startArea">
+        <div style="margin-bottom:10px;">
+          <label for="rounds">Number of questions:</label>
+          <input id="rounds" type="number" min="1" value="6" style="width:110px; display:inline-block; margin-left:8px;">
+        </div>
+        <button id="startBtn">Start Game (enable audio)</button>
+        <div class="note">You will have <strong>10 seconds</strong> per question. Wrong answer or timeout triggers a jumpscare.</div>
+      </div>
+
+      <div id="gameArea">
+        <div id="question">—</div>
+        <div class="row">
+          <input id="answer" type="number" placeholder="Your answer" autocomplete="off" />
+          <button id="submitBtn">Submit</button>
+        </div>
+        <div class="timer" id="timerText">Time left: 10s</div>
+        <div class="note" style="margin-top:8px" id="progressText">Question 1 / 6</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- jumpscare overlay -->
+  <div id="jumpscareOverlay" role="dialog" aria-hidden="true">
+    <img id="scareImg" src="WhatsApp Image 2025-08-09 at 11.17.15_3cb9c25c.jpg" alt="Scary">
+  </div>
+  <div id="flash"></div>
+
+  <!-- audio element (unlocked on start) -->
+  <audio id="scareAudio" preload="auto" src="WhatsApp Audio 2025-08-09 at 13.53.27_8afffdbf.mp3"></audio>
+
+<script>
+(() => {
+  // Configuration
+  const TIME_PER_QUESTION = 10; // seconds
+  const MIN_TWO_DIGIT = 10;
+  const MAX_TWO_DIGIT = 99;
+
+  // DOM
+  const startBtn = document.getElementById('startBtn');
+  const startArea = document.getElementById('startArea');
+  const gameArea = document.getElementById('gameArea');
+  const questionEl = document.getElementById('question');
+  const answerEl = document.getElementById('answer');
+  const submitBtn = document.getElementById('submitBtn');
+  const timerText = document.getElementById('timerText');
+  const progressText = document.getElementById('progressText');
+  const roundsInput = document.getElementById('rounds');
+
+  const jumpscareOverlay = document.getElementById('jumpscareOverlay');
+  const flash = document.getElementById('flash');
+  const scareAudio = document.getElementById('scareAudio');
+  const scareImg = document.getElementById('scareImg');
+
+  // State
+  let questions = [];
+  let currentIndex = 0;
+  let remaining = TIME_PER_QUESTION;
+  let timerInterval = null;
+  let gameActive = false;
+
+  // Helpers
+  function randInt(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
+
+  // Create question pool with two-digit operands. Supports +, -, ×, ÷ (integer division)
+  function makeQuestion(){
+    const ops = ['+','-','×','÷'];
+    const op = ops[Math.floor(Math.random()*ops.length)];
+
+    let a, b, expr, ans;
+
+    if (op === '+'){
+      a = randInt(MIN_TWO_DIGIT, MAX_TWO_DIGIT);
+      b = randInt(MIN_TWO_DIGIT, MAX_TWO_DIGIT);
+      expr = `${a} + ${b}`;
+      ans = a + b;
+    } else if (op === '-'){
+      a = randInt(MIN_TWO_DIGIT, MAX_TWO_DIGIT);
+      b = randInt(MIN_TWO_DIGIT, MAX_TWO_DIGIT);
+      // keep result non-negative
+      if (b > a){ [a,b] = [b,a]; }
+      expr = `${a} - ${b}`;
+      ans = a - b;
+    } else if (op === '×'){
+      a = randInt(MIN_TWO_DIGIT, MAX_TWO_DIGIT);
+      b = randInt(MIN_TWO_DIGIT, MAX_TWO_DIGIT);
+      expr = `${a} × ${b}`;
+      ans = a * b;
+    } else { // division: ensure both displayed operands are two-digit and integer result
+      // choose divisor (b) two-digit
+      b = randInt(MIN_TWO_DIGIT, MAX_TWO_DIGIT);
+      // choose integer quotient q between 2 and such that dividend <= 99
+      // compute maxQ so that b * q <= 99
+      const maxQ = Math.floor(MAX_TWO_DIGIT / b);
+      // if maxQ < 2 (rare if b>49), fall back to smaller b
+      if (maxQ >= 2) {
+        const q = randInt(2, Math.max(2, maxQ));
+        a = b * q; // dividend
+        expr = `${a} ÷ ${b}`;
+        ans = q;
+      } else {
+        // fallback: pick smaller divisor to keep dividend two-digit
+        b = randInt(10, 49);
+        const q = randInt(2, Math.floor(MAX_TWO_DIGIT / b));
+        a = b * q;
+        expr = `${a} ÷ ${b}`;
+        ans = q;
+      }
+    }
+    return { expr, ans };
+  }
+
+  function buildQuestions(count){
+    const arr = [];
+    // ensure diversity by forcing at least one of each operator where possible
+    const ops = ['+','-','×','÷'];
+    // create some deterministic variety first
+    for (let i=0;i<count;i++){
+      arr.push(makeQuestion());
+    }
+    return arr;
+  }
+
+  // Game flow
+  function startGame(){
+    const rounds = Math.max(1, Math.min(20, parseInt(roundsInput.value) || 6));
+    questions = buildQuestions(rounds);
+    currentIndex = 0;
+    startArea.style.display = 'none';
+    gameArea.style.display = 'block';
+    // unlock audio by playing a short silent sound attempt (some browsers)
+    // we try to play a tiny silent buffer by setting currentTime (if supported)
+    try { scareAudio.volume = 1.0; } catch(e){}
+    gameActive = true;
+    showQuestion();
+  }
+
+  function showQuestion(){
+    if (currentIndex >= questions.length){
+      // player won
+      alert("Congratulations — you answered all questions correctly!");
+      location.reload();
+      return;
+    }
+    const q = questions[currentIndex];
+    questionEl.textContent = q.expr;
+    answerEl.value = '';
+    answerEl.focus();
+    progressText.textContent = `Question ${currentIndex+1} / ${questions.length}`;
+    remaining = TIME_PER_QUESTION;
+    timerText.textContent = `Time left: ${remaining}s`;
+    clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+      remaining--;
+      timerText.textContent = `Time left: ${remaining}s`;
+      if (remaining <= 0){
+        clearInterval(timerInterval);
+        // timeout -> jumpscare
+        triggerJumpscare("Time's up!");
+      }
+    }, 1000);
+  }
+
+  function checkAnswer(){
+    if (!gameActive) return;
+    const raw = answerEl.value.trim();
+    if (raw === '') return;
+    // allow negative answers etc — parse as number
+    const user = Number(raw);
+    if (!Number.isFinite(user)){
+      triggerJumpscare("Invalid input!");
+      return;
+    }
+    const correct = questions[currentIndex].ans;
+    if (Math.abs(user - correct) < 1e-9){
+      // correct
+      clearInterval(timerInterval);
+      currentIndex++;
+      // small success animation
+      questionEl.style.transform = 'scale(0.98)';
+      setTimeout(()=> questionEl.style.transform = '', 120);
+      setTimeout(showQuestion, 220);
+    } else {
+      clearInterval(timerInterval);
+      triggerJumpscare("Wrong answer!");
+    }
+  }
+
+  // Jumpscare routine
+  let scareFired = false;
+  function triggerJumpscare(reason){
+    if (scareFired) return;
+    scareFired = true;
+    gameActive = false;
+    // hide normal UI
+    document.getElementById('card').style.opacity = '0';
+    setTimeout(()=> { document.getElementById('card').style.display = 'none'; }, 300);
+
+    // show flash and overlay with animations
+    flash.style.display = 'block';
+    jumpscareOverlay.style.display = 'flex';
+    jumpscareOverlay.setAttribute('aria-hidden','false');
+
+    // apply heavy shake animation to image
+    scareImg.style.animation = 'heavyShake 0.06s infinite';
+    // try to play audio (user interaction should have happened at start or via submit)
+    try {
+      scareAudio.currentTime = 0;
+      scareAudio.play().catch(()=>{/* ignore autoplay block */});
+    } catch(e){}
+
+    // stop flashing after 6 seconds
+    setTimeout(()=>{ flash.style.display = 'none'; }, 6000);
+    // stop shaking after 12s
+    setTimeout(()=>{ scareImg.style.animation = ''; }, 12000);
+
+    // After some time, allow click to reload (dismiss)
+    jumpscareOverlay.addEventListener('click', ()=> location.reload());
+    // safety: exit fullscreen after some time
+    setTimeout(()=> {
+      try { if (document.fullscreenElement) document.exitFullscreen().catch(()=>{}); } catch(e){}
+    }, 20000);
+  }
+
+  // events
+  startBtn.addEventListener('click', () => {
+    // request fullscreen on start for a more dramatic effect
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(()=>{});
+    } else if (document.documentElement.webkitRequestFullscreen) {
+      document.documentElement.webkitRequestFullscreen().catch(()=>{});
+    }
+    startGame();
+  });
+  submitBtn.addEventListener('click', checkAnswer);
+  answerEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') checkAnswer();
+  });
+
+  // prevent accidental navigate away while game active
+  window.addEventListener('beforeunload', (e) => {
+    if (gameActive) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+  // Esc to reload (safe exit)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') location.reload();
+  });
+
+})();
+</script>
+</body>
+</html>
